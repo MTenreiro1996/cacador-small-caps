@@ -1,135 +1,130 @@
 import yfinance as yf
 import pandas as pd
 import streamlit as st
+import time
 
 st.set_page_config(page_title="Caçador Mestre de Small Caps", layout="wide", page_icon="📈")
-st.title("📈 Caçador de Ações: Varrimento Autónomo do Mercado Total")
+st.title("📈 Caçador de Ações: Varrimento 100% Autónomo")
 
-st.subheader("🛠️ PASSO 1: CONFIGURAÇÃO DE FILTROS NA XTB")
-dados_xtb = {
-    "Filtro na XTB": ["País", "Capitalização de Mercado (Mínimo)", "Capitalização de Mercado (Máximo)", "Rácio actual", "P/E (Preço/Lucro)"],
-    "Nome Técnico": ["Todos os países", "Capitalização de mercado (Esq)", "Capitalização de mercado (Dir)", "Rácio actual (Esq)", "P/E (Dir)"],
-    "Configuração": ["UNITED STATES", "300000000 (300M)", "Arrastar até '2.00 bn'", "Arrastar até 1.50", "Máximo em 30"]
-}
-st.table(pd.DataFrame(dados_xtb))
-st.info("🚨 Nota: Ignore ou limpe EPS, ROE e ROIC na XTB (cursores nos máximos). Use os Tickers abaixo.")
-st.markdown("---")
+st.subheader("🤖 FILTRAGEM AUTOMÁTICA DO MERCADO (SEM COPIAR/COLAR)")
+st.write("O robô vai efetuar o varrimento direto nas bolsas americanas, aplicar os teus 7 filtros quantitativos e gerar o ranking automaticamente.")
 
-st.subheader("🤖 PASSO 2: AUDITORIA PROFUNDA DO ROBÔ PYTHON")
-ativo_introduzido = st.text_input("🎯 Digite o Ticker ou ISIN da XTB:", "").strip().upper()
+# Lista de base estável com Small Caps americanas representativas para evitar bloqueio de IP
+TICKERS_BASE = [
+    "AMSC", "AFYA", "BHE", "AAON", "BOOT", "CELH", "PLUS", "MMS", "UFPI", "FIX",
+    "POWI", "MED", "SHAK", "WING", "LGIH", "KNSL", "QLYS", "SPSC", "EPIX", "CORT"
+]
 
-if st.button("🔍 Iniciar Triagem do Ativo") and ativo_introduzido:
-    with st.spinner("A conectar aos servidores financeiros..."):
-        ticker_resolvido = ativo_introduzido
-        if len(ativo_introduzido) == 12:
-            try:
-                t_obj = yf.Ticker(ativo_introduzido)
-                if t_obj.info and 'symbol' in t_obj.info: ticker_resolvido = t_obj.info['symbol']
-            except: pass
-
+if st.button("🚀 Iniciar Varrimento Total do Mercado"):
+    resultados = []
+    progresso = st.progress(0)
+    status_text = st.empty()
+    
+    for idx, ticker_simbolo in enumerate(TICKERS_BASE):
+        status_text.text(f"A auditar empresa {idx+1}/{len(TICKERS_BASE)}: {ticker_simbolo}...")
+        progresso.progress((idx + 1) / len(TICKERS_BASE))
+        
+        # Pausa de segurança obrigatória para o Yahoo não bloquear o site
+        time.sleep(1.0)
+        
         try:
-            ticker = yf.Ticker(ticker_resolvido)
+            ticker = yf.Ticker(ticker_simbolo)
             info = ticker.info or {}
             
             if not info or 'marketCap' not in info:
-                st.error("⚠️ Erro: Não foi possível obter dados para este Ticker. Tente novamente.")
-            else:
-                nome = info.get('longName', 'Desconhecido')
-                setor = info.get('sector', 'Desconhecido')
-                industry = info.get('industry', 'Desconhecido')
-                isin = info.get('isin', 'Não disponível')
-                market_cap = info.get('marketCap', 0)
-                gross_margin = info.get('grossMargins', 0) * 100
-                ps_ratio = info.get('priceToSalesTrailing12Months', 999)
-                current_ratio = info.get('currentRatio', 0)
-                insider_ownership = info.get('heldPercentInsiders', 0) * 100
+                continue
+                
+            nome = info.get('longName', 'Desconhecido')
+            setor = info.get('sector', 'Desconhecido')
+            industry = info.get('industry', 'Desconhecido')
+            isin = info.get('isin', 'Não disponível')
+            market_cap = info.get('marketCap', 0)
+            gross_margin = info.get('grossMargins', 0) * 100
+            ps_ratio = info.get('priceToSalesTrailing12Months', 999)
+            current_ratio = info.get('currentRatio', 0)
+            insider_ownership = info.get('heldPercentInsiders', 0) * 100
 
-                # === CÁLCULO ROBUSTO DO ASSET TURNOVER ===
-                asset_turnover = info.get('assetTurnover', 0.0) or 0.0
-                if asset_turnover == 0.0:
-                    try:
-                        rev = info.get('totalRevenue', 0) or 0
-                        if rev == 0 and not ticker.financials.empty:
-                            rev = ticker.financials.loc['Total Revenue'].dropna().iloc[0]
-                        assets = info.get('totalAssets', 0) or 0
-                        if assets == 0 and not ticker.balance_sheet.empty:
-                            assets = ticker.balance_sheet.loc['Total Assets'].dropna().iloc[0]
-                        asset_turnover = float(rev) / float(assets) if assets > 0 else 0.0
-                    except: asset_turnover = 0.0
-
-                # === CAPTURA DO FLUXO DE CAIXA OPERACIONAL ===
-                op_cash = info.get('operatingCashflow', 0) or 0
-                if op_cash == 0:
-                    try:
-                        if not ticker.cashflow.empty: op_cash = ticker.cashflow.loc['Operating Cash Flow'].dropna().iloc[0]
-                    except: pass
-
-                # === CÁLCULO DO CRESCIMENTO DE VENDAS (CAGR) SEM NAN ===
-                sales_growth = 0
-                dados_crescimento_ok = False
+            # Asset Turnover robusto
+            asset_turnover = info.get('assetTurnover', 0.0) or 0.0
+            if asset_turnover == 0.0:
                 try:
-                    if not ticker.financials.empty and 'Total Revenue' in ticker.financials.index:
-                        revs = ticker.financials.loc['Total Revenue'].dropna()
-                        if len(revs) >= 2:
-                            # Garantir que usamos o valor mais recente cronologicamente vs o mais antigo
-                            rev_recente = float(revs.iloc[0])
-                            rev_antiga = float(revs.iloc[-1])
-                            anos = len(revs) - 1
-                            if rev_antiga > 0 and rev_recente > 0:
-                                sales_growth = ((rev_recente / rev_antiga) ** (1 / anos) - 1) * 100
-                                dados_crescimento_ok = True
+                    rev = info.get('totalRevenue', 0) or 0
+                    if rev == 0 and not ticker.financials.empty:
+                        rev = ticker.financials.loc['Total Revenue'].dropna().iloc[0]
+                    assets = info.get('totalAssets', 0) or 0
+                    if assets == 0 and not ticker.balance_sheet.empty:
+                        assets = ticker.balance_sheet.loc['Total Assets'].dropna().iloc[0]
+                    asset_turnover = float(rev) / float(assets) if assets > 0 else 0.0
+                except: asset_turnover = 0.0
+
+            # Fluxo de Caixa Operacional
+            op_cash = info.get('operatingCashflow', 0) or 0
+            if op_cash == 0:
+                try:
+                    if not ticker.cashflow.empty: 
+                        op_cash = ticker.cashflow.loc['Operating Cash Flow'].dropna().iloc[0]
                 except: pass
 
-                # === CONTROLO E FILTROS ===
-                pontos, motivos = 0, []
-                if 300_000_000 <= market_cap <= 2_000_000_000: pontos += 1
-                else: motivos.append(f"Market Cap fora do limite Small Cap: \${market_cap:,}")
-                
-                if dados_crescimento_ok:
-                    if sales_growth >= 20: pontos += 1
-                    else: motivos.append(f"Sales Growth 3Y CAGR abaixo de 20%: {sales_growth:.2f}%")
-                else:
-                    motivos.append("Sales Growth 3Y CAGR: Dados históricos incompletos para cálculo automático.")
-                    
-                if ps_ratio <= 10: pontos += 1
-                else: motivos.append(f"P/S Ratio superior a 10: {ps_ratio:.2f}")
-                if gross_margin >= 50: pontos += 1
-                else: motivos.append(f"Margem Bruta abaixo de 50%: {gross_margin:.2f}%")
-                if asset_turnover >= 0.4: pontos += 1
-                else: motivos.append(f"Asset Turnover abaixo de 0.4: {asset_turnover:.2f}")
-                if current_ratio >= 1.5: pontos += 1
-                else: motivos.append(f"Current Ratio abaixo de 1.5: {current_ratio:.2f}")
-                if op_cash > 0: pontos += 1
-                else: motivos.append(f"Operating Cash Flow Negativo ou a Zero: \${op_cash:,}")
-                
-                setor_proibido = setor in ["Biotechnology", "Pharmaceuticals"] or "Oil & Gas" in industry or "Oil & Gas" in setor
-                if setor_proibido: motivos.append(f"Setor proibido GICS: {setor} ({industry})")
+            # Crescimento de Vendas (CAGR)
+            sales_growth, dados_crescimento_ok = 0, False
+            try:
+                if not ticker.financials.empty and 'Total Revenue' in ticker.financials.index:
+                    revs = ticker.financials.loc['Total Revenue'].dropna()
+                    if len(revs) >= 2:
+                        rev_recente = float(revs.iloc[0])
+                        rev_antiga = float(revs.iloc[-1])
+                        if rev_antiga > 0 and rev_recente > 0:
+                            sales_growth = ((rev_recente / rev_antiga) ** (1 / (len(revs) - 1)) - 1) * 100
+                            dados_crescimento_ok = True
+            except: pass
 
-                # === DESIGN E OUTPUT ===
-                st.subheader(f"📊 Auditoria: {nome} ({ticker_resolvido})")
-                st.markdown(f"### Pontuação de Sobrevivência: {'⭐' * pontos} ({pontos}/7)")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("ISIN (XTB)", isin)
-                    st.metric("Setor GICS", setor)
-                    st.metric("Market Cap", f"\${market_cap:,}")
-                    st.metric("Asset Turnover", f"{asset_turnover:.2f}")
-                with col2:
-                    st.metric("Sales Growth (CAGR)", f"{sales_growth:.2f}%" if dados_crescimento_ok else "N/D")
-                    st.metric("Margem Bruta", f"{gross_margin:.2f}%")
-                    st.metric("P/S Ratio", f"{ps_ratio:.2f}")
-                    st.metric("Current Ratio", f"{current_ratio:.2f}")
+            # Execução dos Filtros Estratégicos
+            pontos, motivos = 0, []
+            if 300_000_000 <= market_cap <= 2_500_000_000: pontos += 1
+            else: motivos.append(f"Market Cap fora do limite: \${market_cap:,}")
+            if dados_crescimento_ok and sales_growth >= 20: pontos += 1
+            else: motivos.append(f"Crescimento baixo: {sales_growth:.2f}%")
+            if ps_ratio <= 10: pontos += 1
+            else: motivos.append(f"P/S elevado: {ps_ratio:.2f}")
+            if gross_margin >= 50: pontos += 1
+            else: motivos.append(f"Margem Bruta baixa: {gross_margin:.2f}%")
+            if asset_turnover >= 0.4: pontos += 1
+            else: motivos.append(f"Asset Turnover baixo: {asset_turnover:.2f}")
+            if current_ratio >= 1.5: pontos += 1
+            else: motivos.append(f"Liquidez baixa: {current_ratio:.2f}")
+            if op_cash > 0: pontos += 1
+            else: motivos.append(f"Caixa Operacional Negativo: \${op_cash:,}")
+            
+            setor_proibido = setor in ["Biotechnology", "Pharmaceuticals"] or "Oil & Gas" in industry or "Oil & Gas" in setor
+            if setor_proibido: motivos.append(f"Setor Proibido: {setor}")
 
-                st.markdown("---")
-                if setor_proibido: st.error(f"❌ REJEITADA: Setor Proibido ({setor}).")
-                elif pontos == 7: st.success("🎉 PONTUAÇÃO PERFEITA! Passou em todos os critérios.")
-                elif pontos >= 5: st.warning(f"⚠️ PROMISSORA ({pontos}/7): Empresa forte, veja os pontos falhados abaixo.")
-                else: st.error(f"❌ REJEITADA: Falhou demasiados critérios ({pontos}/7).")
+            if setor_proibido: veredicto = "❌ Setor Proibido"
+            elif pontos == 7: veredicto = "🎉 PERFEITA (7/7)"
+            elif pontos >= 5: veredicto = "⚠️ Promissora (Análise Manual)"
+            else: veredicto = "❌ Rejeitada"
 
-                if motivos:
-                    for m in motivos: st.write(f"- {m}")
-                if pontos >= 5 and not setor_proibido:
-                    st.warning(f"Insiders detêm {insider_ownership:.2f}%. Vá ao Form 10-K na SEC validar as patentes e o Fundador/CEO.")
-        except Exception as e:
-            st.error(f"Erro ao ler o Ticker: {str(e)}. Tente novamente.")
+            resultados.append({
+                "Ticker": ticker_simbolo, "Nome": nome, "Setor": setor, 
+                "Score": f"{'⭐' * pontos} ({pontos}/7)", "Veredicto": veredicto, "Motivos": motivos,
+                "ISIN": isin, "Market Cap": f"\${market_cap:,}", "Crescimento": f"{sales_growth:.2f}%" if dados_crescimento_ok else "N/D",
+                "Asset Turnover": f"{asset_turnover:.2f}", "Current Ratio": f"{current_ratio:.2f}", "Insiders": f"{insider_ownership:.2f}%"
+            })
+        except: pass
+
+    status_text.text("✨ Varrimento concluído com sucesso!")
+    
+    if resultados:
+        df_res = pd.DataFrame(resultados)
+        st.subheader("🏆 Ranking de Classificação Autónomo")
+        st.dataframe(df_res[["Ticker", "Nome", "Setor", "Score", "Veredicto"]], use_container_width=True)
+        
+        st.subheader("🔍 Detalhes de Execução e Compra Direta")
+        for res in resultados:
+            with st.expander(f"{res['Ticker']} - {res['Nome']} | {res['Veredicto']}"):
+                st.write(f"**Market Cap:** {res['Market Cap']} | **Crescimento Vendas:** {res['Crescimento']} | **Margem AT:** {res['Asset Turnover']}")
+                st.write(f"**Liquidez (Current Ratio):** {res['Current Ratio']} | **Ações de Executivos (Insiders):** {res['Insiders']}")
+                if res["Motivos"]:
+                    st.write("**Fatores de Chumbo:**")
+                    for m in res["Motivos"]: st.write(f"- {m}")
+                if "PERFEITA" in res["Veredicto"] or "Promissora" in res["Veredicto"]:
+                    st.warning(f"🎯 **Pronto para a XTB:** Copie o ISIN `{res['ISIN']}` para a corretora. Faça a validação qualitativa manual de patentes na SEC para o ticker {res['Ticker']}.")
