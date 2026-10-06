@@ -44,16 +44,16 @@ if st.button("🔍 Iniciar Triagem do Ativo") and ativo_introduzido:
                 current_ratio = info.get('currentRatio', 0)
                 insider_ownership = info.get('heldPercentInsiders', 0) * 100
 
-                # === CÁCULO ROBUSTO DO ASSET TURNOVER ===
+                # === CÁLCULO ROBUSTO DO ASSET TURNOVER ===
                 asset_turnover = info.get('assetTurnover', 0.0) or 0.0
                 if asset_turnover == 0.0:
                     try:
                         rev = info.get('totalRevenue', 0) or 0
                         if rev == 0 and not ticker.financials.empty:
-                            rev = ticker.financials.loc['Total Revenue'].iloc[0]
+                            rev = ticker.financials.loc['Total Revenue'].dropna().iloc[0]
                         assets = info.get('totalAssets', 0) or 0
                         if assets == 0 and not ticker.balance_sheet.empty:
-                            assets = ticker.balance_sheet.loc['Total Assets'].iloc[0]
+                            assets = ticker.balance_sheet.loc['Total Assets'].dropna().iloc[0]
                         asset_turnover = float(rev) / float(assets) if assets > 0 else 0.0
                     except: asset_turnover = 0.0
 
@@ -61,23 +61,36 @@ if st.button("🔍 Iniciar Triagem do Ativo") and ativo_introduzido:
                 op_cash = info.get('operatingCashflow', 0) or 0
                 if op_cash == 0:
                     try:
-                        if not ticker.cashflow.empty: op_cash = ticker.cashflow.loc['Operating Cash Flow'].iloc[0]
+                        if not ticker.cashflow.empty: op_cash = ticker.cashflow.loc['Operating Cash Flow'].dropna().iloc[0]
                     except: pass
 
-                # === CÁLCULO DO CRESCIMENTO DE VENDAS (CAGR) ===
+                # === CÁLCULO DO CRESCIMENTO DE VENDAS (CAGR) SEM NAN ===
                 sales_growth = 0
+                dados_crescimento_ok = False
                 try:
                     if not ticker.financials.empty and 'Total Revenue' in ticker.financials.index:
-                        revs = ticker.financials.loc['Total Revenue']
-                        sales_growth = ((float(revs.iloc[0]) / float(revs.iloc[-1])) ** (1 / (len(revs) - 1)) - 1) * 100
-                except: sales_growth = 0
+                        revs = ticker.financials.loc['Total Revenue'].dropna()
+                        if len(revs) >= 2:
+                            # Garantir que usamos o valor mais recente cronologicamente vs o mais antigo
+                            rev_recente = float(revs.iloc[0])
+                            rev_antiga = float(revs.iloc[-1])
+                            anos = len(revs) - 1
+                            if rev_antiga > 0 and rev_recente > 0:
+                                sales_growth = ((rev_recente / rev_antiga) ** (1 / anos) - 1) * 100
+                                dados_crescimento_ok = True
+                except: pass
 
                 # === CONTROLO E FILTROS ===
                 pontos, motivos = 0, []
                 if 300_000_000 <= market_cap <= 2_000_000_000: pontos += 1
                 else: motivos.append(f"Market Cap fora do limite Small Cap: \${market_cap:,}")
-                if sales_growth >= 20: pontos += 1
-                else: motivos.append(f"Sales Growth 3Y CAGR abaixo de 20%: {sales_growth:.2f}%")
+                
+                if dados_crescimento_ok:
+                    if sales_growth >= 20: pontos += 1
+                    else: motivos.append(f"Sales Growth 3Y CAGR abaixo de 20%: {sales_growth:.2f}%")
+                else:
+                    motivos.append("Sales Growth 3Y CAGR: Dados históricos incompletos para cálculo automático.")
+                    
                 if ps_ratio <= 10: pontos += 1
                 else: motivos.append(f"P/S Ratio superior a 10: {ps_ratio:.2f}")
                 if gross_margin >= 50: pontos += 1
@@ -103,7 +116,7 @@ if st.button("🔍 Iniciar Triagem do Ativo") and ativo_introduzido:
                     st.metric("Market Cap", f"\${market_cap:,}")
                     st.metric("Asset Turnover", f"{asset_turnover:.2f}")
                 with col2:
-                    st.metric("Sales Growth (CAGR)", f"{sales_growth:.2f}%")
+                    st.metric("Sales Growth (CAGR)", f"{sales_growth:.2f}%" if dados_crescimento_ok else "N/D")
                     st.metric("Margem Bruta", f"{gross_margin:.2f}%")
                     st.metric("P/S Ratio", f"{ps_ratio:.2f}")
                     st.metric("Current Ratio", f"{current_ratio:.2f}")
