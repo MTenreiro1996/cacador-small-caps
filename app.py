@@ -1,165 +1,110 @@
-import yfinance as yf
-import pandas as pd
-import streamlit as st
-import requests
-import json
-import time
+import yfinance as yf, pandas as pd, streamlit as st, requests
 
-st.set_page_config(page_title="Caçador Mestre de Small Caps", layout="wide", page_icon="📈")
-st.title("📈 Caçador de Ações: Varrimento 100% Autónomo do Mercado")
+st.set_page_config(page_title="Screener Automático de Ações", layout="wide", page_icon="📈")
+st.title("📈 Caçador de Ações: Screener Automático e Auditor de Hipercrescimento")
+st.table(pd.DataFrame({"Filtro na XTB": ["País", "Capitalização de Mercado (Mínimo)", "Capitalização de Mercado (Máximo)", "Rácio actual", "P/E (Preço/Lucro)"], "Configuração": ["UNITED STATES", "300000000 (300M)", "Arrastar até '2.00 bn'", "Arrastar até 1.50", "Máximo em 30"]}))
+st.info("🚨 Nota: Ignore indústrias de Biotecnologia, Farmacêuticas e Petróleo/Gás na XTB. Introduza o Ticker abaixo.")
+st.markdown("---")
+entrada_usuario = st.text_input("🎯 Introduza o Ticker ou o Código ISIN da XTB:", "").strip().upper()
 
-st.subheader("👑 MOTOR QUANTA E PARSING DE PATENTES DA SEC (ZERO TRABALHO MANUAL)")
-st.write("O robô faz o mapeamento total do mercado, elimina setores proibidos e gera o ranking com as patentes da SEC.")
-
-# Lista base alargada com Small Caps puras para triagem automática estável
-TICKERS_MERCADO = [
-    "AMSC", "AFYA", "BHE", "AAON", "BOOT", "CELH", "PLUS", "MMS", "UFPI", "FIX",
-    "SHAK", "WING", "LGIH", "KNSL", "QLYS", "SPSC", "EPIX", "CORT", "POWI", "MED",
-    "PRTH", "NVMI", "SMTC", "EXTR", "FORM", "SGH", "AEIS", "COHR", "DIOD", "OSIS"
-]
-
-def analisar_patentes_sec(ticker_simbolo):
-    headers = {'User-Agent': "CacadorQuant analise@quantmarta.com"}
+def extrair_patentes_sec_edgar(ticker_simbolo):
+    headers = {'User-Agent': "ScreenerCacadorOuro analise@quantinvestimentos.com"}
     try:
-        cik_url = "https://sec.gov"
-        res_cik = requests.get(cik_url, headers=headers, timeout=4)
+        res_cik = requests.get("https://sec.gov", headers=headers, timeout=5)
         if res_cik.status_code == 200:
             for val in res_cik.json().values():
                 if val['ticker'].upper() == ticker_simbolo.upper():
-                    cik = str(val['cik_str']).zfill(10)
-                    sub_url = f"https://sec.gov{cik}.json"
-                    sub_data = requests.get(sub_url, headers=headers, timeout=4).json()
-                    recent = sub_data['filings']['recent']
-                    for i, form in enumerate(recent['form']):
+                    cik_str = str(val['cik_str']).zfill(10)
+                    sub_data = requests.get(f"https://sec.gov{cik_str}.json", headers=headers, timeout=5).json()
+                    recent_filings = sub_data['filings']['recent']
+                    for i, form in enumerate(recent_filings['form']):
                         if form == '10-K':
-                            acc_num = recent['accessionNumber'][i].replace('-', '')
-                            doc_name = recent['primaryDocument'][i]
-                            text_url = f"https://sec.gov{cik}/{acc_num}/{doc_name}"
-                            texto_relatorio = requests.get(text_url, headers=headers, timeout=4).text.lower()
-                            
-                            contagem = texto_relatorio.count("patent") + texto_relatorio.count("proprietary technology")
-                            if contagem > 0:
-                                return f"Fosso Validado! Encontradas {contagem} referências a patentes/tecnologia no 10-K."
-                            return "⚠️ Sem patentes ou tecnologia proprietária explícitas no 10-K."
-        return "⚠️ CIK não localizado na SEC."
-    except:
-        return "⚠️ Servidor SEC ocupado. Faça a validação manual do 10-K."
+                            acc_num, doc_name = recent_filings['accessionNumber'][i].replace('-', ''), recent_filings['primaryDocument'][i]
+                            texto_limpo = requests.get(f"https://sec.gov{cik_str}/{acc_num}/{doc_name}", headers=headers, timeout=8).text.lower()
+                            count_patents, count_tech = texto_limpo.count("patents"), texto_limpo.count("proprietary technology")
+                            if count_patents > 0 or count_tech > 0: return f"🎉 Fosso Validado! Encontradas {count_patents} referências a 'patents' e {count_tech} a 'proprietary technology' no Form 10-K da SEC."
+                            return "⚠️ Alerta Qualitativo: O relatório anual 10-K não apresentou termos explícitos de patentes."
+        return "⚠️ Não foi possível localizar o código CIK desta empresa nos servidores da SEC EDGAR."
+    except Exception as e: return f"⚠️ Validação Qualitativa Interrompida: Servidor da SEC indisponível ({str(e)})."
 
-if st.button("🚀 Iniciar Varrimento Total do Mercado"):
-    resultados = []
-    progresso = st.progress(0)
-    status_text = st.empty()
-    total_lote = len(TICKERS_MERCADO)
-    
-    for idx, ticker_simbolo in enumerate(TICKERS_MERCADO):
-        status_text.text(f"A auditar {idx+1}/{total_lote}: {ticker_simbolo}...")
-        progresso.progress((idx + 1) / total_lote)
-        
-        time.sleep(1.0) # Proteção anti-bloqueio
-        
-        try:
-            ticker = yf.Ticker(ticker_simbolo)
-            info = ticker.info or {}
-            
-            if not info or 'marketCap' not in info:
-                continue
-                
-            market_cap = info.get('marketCap', 0)
-            setor = info.get('sector', 'Desconhecido')
-            industry = info.get('industry', 'Desconhecido')
-            
-            # FILTRO 1: Capitalização de Mercado (\$300M a \$2B)
-            if not (300_000_000 <= market_cap <= 2_000_000_000):
-                continue
-                
-            # FILTRO 5 (PARTE A): EXCLUSÃO RIGOROSA E INTEGRAL DE SETORES
-            setor_proibido = (
-                "Biotechnology" in industry or "Biotechnology" in setor or
-                "Pharmaceuticals" in industry or "Pharmaceuticals" in setor or
-                "Oil & Gas Exploration" in industry or "Oil & Gas" in industry or "Oil & Gas" in setor
-            )
-            if setor_proibido:
-                continue
-
-            nome = info.get('longName', 'Desconhecido')
-            isin = info.get('isin', 'Não disponível')
-            gross_margin = info.get('grossMargins', 0) * 100
-            ps_ratio = info.get('priceToSalesTrailing12Months', 999)
-            current_ratio = info.get('currentRatio', 0)
-            insider_ownership = info.get('heldPercentInsiders', 0) * 100
-
-            # Métrica 5 (Parte B): Asset Turnover com Fallback
-            asset_turnover = info.get('assetTurnover', 0.0) or 0.0
-            if asset_turnover == 0.0:
-                try:
-                    rev = info.get('totalRevenue', 0) or 0
-                    if rev == 0 and not ticker.financials.empty: rev = ticker.financials.loc['Total Revenue'].dropna().iloc
-                    assets = info.get('totalAssets', 0) or 0
-                    if assets == 0 and not ticker.balance_sheet.empty: assets = ticker.balance_sheet.loc['Total Assets'].dropna().iloc
-                    asset_turnover = float(rev) / float(assets) if assets > 0 else 0.0
-                except: asset_turnover = 0.0
-
-            # Métrica 7: Fluxo de Caixa Operacional
-            op_cash = info.get('operatingCashflow', 0) or 0
-            if op_cash == 0:
-                try:
-                    if not ticker.cashflow.empty: op_cash = ticker.cashflow.loc['Operating Cash Flow'].dropna().iloc
-                except: pass
-
-            # Métrica 2: Crescimento de Vendas (CAGR 3 anos exato)
-            sales_growth, dados_crescimento_ok = 0, False
+if st.button("🔍 Iniciar Auditoria Avançada") and entrada_usuario:
+    with st.spinner("A processar dados..."):
+        ticker_final = entrada_usuario
+        if len(entrada_usuario) == 12 and entrada_usuario.isalnum():
             try:
-                if not ticker.financials.empty and 'Total Revenue' in ticker.financials.index:
-                    revs = ticker.financials.loc['Total Revenue'].dropna()
-                    if len(revs) >= 4:
-                        sales_growth = ((float(revs.iloc) / float(revs.iloc)) ** (1/3) - 1) * 100
-                        dados_crescimento_ok = True
+                obj_t = yf.Ticker(entrada_usuario)
+                if obj_t.info and 'symbol' in obj_t.info: ticker_final = obj_t.info['symbol'].upper()
             except: pass
-
-            # Contagem de Critérios (Rigor Máximo Reposto)
-            pontos, motivos = 0, []
-            if 300_000_000 <= market_cap <= 2_000_000_000: pontos += 1
-            if dados_crescimento_ok and sales_growth >= 20: pontos += 1
-            else: motivos.append(f"Crescimento 3Y baixo: {sales_growth:.2f}%")
-            if ps_ratio < 10: pontos += 1
-            else: motivos.append(f"P/S elevado (>10): {ps_ratio:.2f}")
-            if gross_margin >= 50: pontos += 1
-            else: motivos.append(f"Margem Bruta baixa (<50%): {gross_margin:.2f}%")
-            if asset_turnover > 0.4: pontos += 1
-            else: motivos.append(f"Asset Turnover baixo (<0.4): {asset_turnover:.2f}")
-            if current_ratio >= 2.0: pontos += 1
-            else: motivos.append(f"Current Ratio baixo (<2.0): {current_ratio:.2f}")
-            if op_cash > 0: pontos += 1
-            else: motivos.append(f"Caixa Operacional Negativo: \${op_cash:,}")
-
-            if pontos == 7: veredicto = "🎉 PERFEITA (7/7)"
-            elif pontos >= 5: veredicto = "⚠️ Promissora"
-            else: veredicto = "❌ Rejeitada"
-
-            # Executar Parsing Qualitativo da SEC apenas para empresas fortes sobreviventes
-            veredicto_sec = "Análise SEC ignorada por baixo score."
-            if pontos >= 5:
-                veredicto_sec = analisar_patentes_sec(ticker_simbolo)
-
-            resultados.append({
-                "Ticker": ticker_simbolo, "Nome": nome, "Setor": setor, 
-                "Score": f"{'⭐' * pontos} ({pontos}/7)", "Veredicto": veredicto, "Patentes (SEC)": veredicto_sec,
-                "ISIN": isin, "Market Cap": f"\${market_cap:,}", "Crescimento": f"{sales_growth:.2f}%" if dados_crescimento_ok else "N/D",
-                "Asset Turnover": f"{asset_turnover:.2f}", "Current Ratio": f"{current_ratio:.2f}", "Insiders": f"{insider_ownership:.2f}%"
-            })
-        except: pass
-
-    status_text.text("✨ Varrimento concluído!")
-    if resultados:
-        df_res = pd.DataFrame(resultados).sort_values(by="Score", ascending=False)
-        st.subheader("🏆 Ranking de Classificação das Ações Auditadas")
-        st.dataframe(df_res[["Ticker", "Nome", "Setor", "Score", "Veredicto"]], use_container_width=True)
-        
-        st.subheader("🔍 Painéis Detalhados e Compra Segura na XTB")
-        for res in resultados:
-            if "PERFEITA" in res["Veredicto"] or "Promissora" in res["Veredicto"]:
-                with st.expander(f"⭐ {res['Ticker']} - {res['Nome']} | {res['Veredicto']}"):
-                    st.write(f"**Código ISIN para a XTB:** `{res['ISIN']}`")
-                    st.info(f"📜 **SEC EDGAR:** {res['Patentes (SEC)']}")
-                    st.write(f"**Crescimento 3Y:** {res['Crescimento']} | **Asset Turnover:** {res['Asset Turnover']} | **Liquidez:** {res['Current Ratio']}")
-                    st.warning(f"Insider Ownership: {res['Insiders']}. Confirme no Yahoo Finance se o fundador é o CEO atual.")
+        try:
+            ticker = yf.Ticker(ticker_final)
+            info = ticker.info or {}
+            if not info or 'marketCap' not in info: st.error("Erro: Não foram encontrados metadados financeiros estáveis para este Ticker.")
+            else:
+                nome_empresa, setor_gics, industria_gics, codigo_isin, market_cap = info.get('longName', 'Desconhecido'), info.get('sector', 'Desconhecido'), info.get('industry', 'Desconhecido'), info.get('isin', 'Não Disponível'), info.get('marketCap', 0)
+                gross_margin_pct, ps_ratio, current_ratio, insider_ownership = info.get('grossMargins', 0.0) * 100, info.get('priceToSalesTrailing12Months', 999.0), info.get('currentRatio', 0.0), info.get('heldPercentInsiders', 0.0) * 100
+                setor_proibido = (setor_gics in ["Biotechnology", "Pharmaceuticals", "Oil & Gas Exploration"]) or (industria_gics in ["Biotechnology", "Pharmaceuticals", "Oil & Gas Exploration"])
+                asset_turnover = info.get('assetTurnover', 0.0) or 0.0
+                if asset_turnover == 0.0 and not ticker.financials.empty and not ticker.balance_sheet.empty:
+                    try: asset_turnover = float(ticker.financials.loc['Total Revenue'].dropna().iloc[0]) / float(ticker.balance_sheet.loc['Total Assets'].dropna().iloc[0])
+                    except: asset_turnover = 0.0
+                operating_cash_flow = info.get('operatingCashflow', 0) or 0
+                if operating_cash_flow == 0 and not ticker.cashflow.empty and 'Operating Cash Flow' in ticker.cashflow.index:
+                    try: operating_cash_flow = float(ticker.cashflow.loc['Operating Cash Flow'].dropna().iloc[0])
+                    except: pass
+                sales_growth_cagr, dados_crescimento_validos = 0.0, False
+                if not ticker.financials.empty and 'Total Revenue' in ticker.financials.index:
+                    try:
+                        tabela_receitas = ticker.financials.loc['Total Revenue'].dropna()
+                        if len(tabela_receitas) >= 4:
+                            sales_growth_cagr = ((float(tabela_receitas.iloc[0]) / float(tabela_receitas.iloc[3])) ** (1/3) - 1) * 100
+                            dados_crescimento_validos = True
+                    except: pass
+                pontos_score, motivos_chumbo = 0, []
+                if 300000000 <= market_cap <= 2000000000: pontos_score += 1
+                else: motivos_chumbo.append(f"Métrica 1 (Market Cap) Violada: \${market_cap:,.0f}")
+                if dados_crescimento_validos and sales_growth_cagr >= 20.0: pontos_score += 1
+                else: motivos_chumbo.append(f"Métrica 2 (Sales Growth) Violada: {sales_growth_cagr:.2f}%")
+                if ps_ratio < 10.0: pontos_score += 1
+                else: motivos_chumbo.append(f"Métrica 3 (P/S Ratio) Violada: {ps_ratio:.2f}")
+                if gross_margin_pct >= 50.0: pontos_score += 1
+                else: motivos_chumbo.append(f"Métrica 4 (Gross Margin) Violada: {gross_margin_pct:.2f}%")
+                if asset_turnover > 0.4 and not setor_proibido: pontos_score += 1
+                else:
+                    if asset_turnover <= 0.4: motivos_chumbo.append(f"Métrica 5 (Asset Turnover) Violada: {asset_turnover:.2f}")
+                    if setor_proibido: motivos_chumbo.append(f"Métrica 5 (Setor Proibido GICS): {setor_gics}")
+                if current_ratio > 2.0: pontos_score += 1
+                else: motivos_chumbo.append(f"Métrica 6 (Current Ratio) Violada: {current_ratio:.2f}")
+                if operating_cash_flow > 0: pontos_score += 1
+                else: motivos_chumbo.append(f"Métrica 7 (Operating Cash Flow) Violada: \${operating_cash_flow:,.2f}")
+                veredicto_sec_final = "Análise Qualitativa bloqueada por falha nos filtros numéricos iniciais."
+                if pontos_score >= 4 and not setor_proibido: veredicto_sec_final = extrair_patentes_sec_edgar(ticker_final)
+                st.subheader(f"📊 Painel Visual do Ativo: {nome_empresa} ({ticker_final})")
+                st.markdown(f"### Pontuação Quantitativa de Sobrevivência: {'⭐' * pontos_score} ({pontos_score}/7)")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Código ISIN Exato (Pesquisa XTB)", codigo_isin)
+                    st.metric("Capitalização de Mercado (Market Cap)", f"\${market_cap:,.0f}")
+                    st.metric("Rotação de Ativos (Asset Turnover)", f"{asset_turnover:.2f}")
+                    st.metric("Rácio de Liquidez Corrente (Current Ratio)", f"{current_ratio:.2f}")
+                with col2:
+                    st.metric("Crescimento de Receitas (3Y CAGR)", f"{sales_growth_cagr:.2f}%" if dados_crescimento_validos else "Dados Incompletos")
+                    st.metric("Margem Bruta (Gross Margin)", f"{gross_margin_pct:.2f}%")
+                    st.metric("Rácio Price-to-Sales (P/S)", f"{ps_ratio:.2f}")
+                    st.metric("Fluxo de Caixa Operacional", f"\${operating_cash_flow:,.2f}")
+                st.markdown("---")
+                st.subheader("📑 Veredicto do Robô sobre o Fosso Económico (SEC Edgar)")
+                if "Fosso Validado" in veredicto_sec_final: st.success(veredicto_sec_final)
+                else: st.warning(veredicto_sec_final)
+                st.markdown("---")
+                if setor_proibido: st.error(f"❌ REJEITADA DIRETAMENTE PELO FILTRO GICS ({setor_gics} / {industria_gics}).")
+                elif pontos_score == 7: st.success("🎉 FUNIL CONCLUÍDO! Saúde financeira impecável.")
+                elif pontos_score >= 5: st.warning("⚠️ PROMISSORA: Excelente, mas falhou em critérios secundários.")
+                else: st.error("❌ REJEITADA: O ativo chumbou em critérios obrigatórios.")
+                if motivos_chumbo:
+                    st.markdown("#### Detalhes dos Critérios Não Cumpridos:")
+                    for m in motivos_chumbo: st.write(f"- {m}")
+                if pontos_score >= 4 and not setor_proibido:
+                    st.markdown("---")
+                    st.subheader("🚨 AVISO DE VALIDAÇÃO MANUAL OBRIGATÓRIA")
+                    st.info(f"Confirme no Yahoo Finance: 1. Fator Fundador como CEO atual | 2. Insider Ownership > 10% (Atual: {insider_ownership:.2f}%).\n\n🎯 Compra na XTB com o ISIN: `{codigo_isin}`.")
+        except Exception as e: st.error(f"Erro Crítico de Execução: {str(e)}")
